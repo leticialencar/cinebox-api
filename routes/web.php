@@ -12,22 +12,9 @@ Route::get('/dashboard', [HomeController::class, 'index'])
     ->name('dashboard');
 
 Route::middleware('auth')->group(function () {
-
-    Route::post('/movies/save-or-update', [MovieController::class, 'saveOrUpdate'])
-        ->name('movies.saveOrUpdate');
-
-    Route::post('/movies/store-from-api', [MovieController::class, 'storeFromApi'])
-        ->name('movies.storeFromApi');
-
-    Route::get('/movies/tmdb/{id}', [MovieController::class, 'showFromApi'])
+    Route::get('/media/{type}/{id}', [MovieController::class, 'showFromApi'])
+        ->where('type', 'movie|tv')
         ->name('movies.showFromApi');
-
-    Route::patch('/movies/{movie}/favorite', [MovieController::class, 'toggleFavorite'])
-        ->name('movies.toggleFavorite');
-
-    Route::get('/movies/search', [MovieController::class, 'search'])->name('movies.search');
-
-    Route::resource('movies', MovieController::class);
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');

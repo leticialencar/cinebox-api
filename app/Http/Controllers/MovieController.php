@@ -265,4 +265,52 @@ class MovieController extends Controller
                 ->values()
         );
     }
+
+    public function popular()
+{
+    $apiKey = config('services.tmdb.key');
+
+    $movies = Http::get('https://api.themoviedb.org/3/movie/popular', [
+        'api_key'  => $apiKey,
+        'language' => 'pt-BR',
+    ])->json()['results'] ?? [];
+
+    $shows = Http::get('https://api.themoviedb.org/3/tv/popular', [
+        'api_key'  => $apiKey,
+        'language' => 'pt-BR',
+    ])->json()['results'] ?? [];
+
+    $popular = collect($movies)
+        ->map(fn($m) => [
+            'id'           => $m['id'],
+            'title'        => $m['title'],
+            'poster'       => $m['poster_path']
+                ? 'https://image.tmdb.org/t/p/w185' . $m['poster_path']
+                : null,
+            'backdrop'     => $m['backdrop_path']
+                ? 'https://image.tmdb.org/t/p/original' . $m['backdrop_path']
+                : null,
+            'vote_average' => number_format($m['vote_average'], 1),
+            'media_type'   => 'movie',
+        ])
+        ->merge(
+            collect($shows)->map(fn($s) => [
+                'id'           => $s['id'],
+                'title'        => $s['name'],
+                'poster'       => $s['poster_path']
+                    ? 'https://image.tmdb.org/t/p/w185' . $s['poster_path']
+                    : null,
+                'backdrop'     => $s['backdrop_path']
+                    ? 'https://image.tmdb.org/t/p/original' . $s['backdrop_path']
+                    : null,
+                'vote_average' => number_format($s['vote_average'], 1),
+                'media_type'   => 'tv',
+            ])
+        )
+        ->sortByDesc('vote_average')
+        ->take(20)
+        ->values();
+
+    return response()->json($popular);
+}
 }

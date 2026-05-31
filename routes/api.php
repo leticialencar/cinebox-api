@@ -3,15 +3,18 @@
 use App\Http\Controllers\MovieController;
 use App\Http\Controllers\AuthController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\ProfileController;
 
-// ── Públicas (sem token) ──────────────────────────────────────────
+// publicas
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::get('/media/popular', [MovieController::class, 'popular']);
 
-// ── Autenticadas ──────────────────────────────────────────────────
+// autenticadas
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    Route::post('/user/avatar', [ProfileController::class, 'updateAvatar']);
 
     Route::get('/movies', [MovieController::class, 'index']);
     Route::post('/movies/store-from-api', [MovieController::class, 'storeFromApi']);

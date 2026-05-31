@@ -64,7 +64,7 @@ class MovieController extends Controller
         $apiKey = config('services.tmdb.key');
 
         $item = Http::get("https://api.themoviedb.org/3/{$type}/{$id}", [
-            'api_key' => $apiKey,
+            'api_key'  => $apiKey,
             'language' => 'pt-BR',
         ])->json();
 
@@ -76,19 +76,21 @@ class MovieController extends Controller
         $release = $item['release_date'] ?? $item['first_air_date'] ?? null;
 
         $videos = Http::get("https://api.themoviedb.org/3/{$type}/{$id}/videos", [
-            'api_key' => $apiKey,
+            'api_key'  => $apiKey,
             'language' => 'pt-BR',
         ])->json('results') ?? [];
 
         if (empty($videos)) {
             $videos = Http::get("https://api.themoviedb.org/3/{$type}/{$id}/videos", [
-                'api_key' => $apiKey,
+                'api_key'  => $apiKey,
                 'language' => 'en-US',
             ])->json('results') ?? [];
         }
 
-        $credits = Http::get("https://api.themoviedb.org/3/{$type}/{$id}/credits", [
-            'api_key' => $apiKey,
+        $creditsEndpoint = $type === 'tv' ? 'aggregate_credits' : 'credits';
+
+        $credits = Http::get("https://api.themoviedb.org/3/{$type}/{$id}/{$creditsEndpoint}", [
+            'api_key'  => $apiKey,
             'language' => 'pt-BR',
         ])->json() ?? ['cast' => [], 'crew' => []];
 
@@ -104,32 +106,52 @@ class MovieController extends Controller
             ? number_format($item['vote_average'], 1)
             : '0.0';
 
-        $crew = collect($credits['crew']);
+        $genres = collect($item['genres'] ?? [])
+            ->pluck('name')
+            ->implode(', ');
 
-        $director = $crew->firstWhere('job', 'Director')['name'] ?? '—';
+        $crew = collect($credits['crew'] ?? []);
 
-        $writer = $crew->firstWhere('job', 'Writer')['name']
-            ?? $crew->firstWhere('job', 'Screenplay')['name']
-            ?? '—';
+        if ($type === 'tv') {
+            $director = $crew->first(function ($c) {
+                return collect($c['jobs'] ?? [])->contains('job', 'Director');
+            })['name'] ?? null;
+
+            if (!$director) {
+                $director = collect($item['created_by'] ?? [])->pluck('name')->first() ?? '—';
+            }
+
+            $writer = $crew->first(function ($c) {
+                $jobs = collect($c['jobs'] ?? [])->pluck('job');
+                return $jobs->contains('Writer') || $jobs->contains('Screenplay');
+            })['name'] ?? '—';
+
+        } else {
+            $director = $crew->firstWhere('job', 'Director')['name'] ?? '—';
+            $writer   = $crew->firstWhere('job', 'Writer')['name']
+                ?? $crew->firstWhere('job', 'Screenplay')['name']
+                ?? '—';
+        }
 
         $studios = collect($item['production_companies'] ?? [])
             ->pluck('name')
             ->take(2)
             ->implode(', ');
 
-        $cast = collect($credits['cast'])
+        $cast = collect($credits['cast'] ?? [])
             ->take(10)
             ->map(fn($c) => [
                 'id'        => $c['id'],
                 'name'      => $c['name'],
-                'character' => $c['character'] ?? null,
+                'character' => $type === 'tv'
+                    ? (collect($c['roles'] ?? [])->first()['character'] ?? null)
+                    : ($c['character'] ?? null),
                 'profile'   => $c['profile_path']
                     ? 'https://image.tmdb.org/t/p/w185' . $c['profile_path']
                     : null,
             ]);
 
-        $firstWord = strtolower(explode(' ', trim(strtolower($title)))[0]);
-
+        $firstWord        = strtolower(explode(' ', trim($title))[0]);
         $videosCollection = collect($videos);
 
         $trailer = $videosCollection->first(function ($v) use ($firstWord) {
@@ -157,6 +179,7 @@ class MovieController extends Controller
             'backdrop'    => $backdrop,
             'rating'      => $rating,
             'release'     => $release,
+            'genres'      => $genres,   // ← novo
             'director'    => $director,
             'writer'      => $writer,
             'studios'     => $studios,

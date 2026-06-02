@@ -18,6 +18,7 @@ class Movie extends Model
         'user_id', 
         'tmdb_id', 
         'poster',
+        'media_type',
     ];
 
     protected $casts = [

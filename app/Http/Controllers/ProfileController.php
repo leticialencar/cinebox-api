@@ -65,6 +65,34 @@ class ProfileController extends Controller
         return Redirect::route('profile.edit')->with('status', 'profile-updated');
     }
 
+    public function updateAvatar(Request $request)
+    {
+        $request->validate([
+            'avatar' => 'required|image|max:4096',
+        ]);
+
+        $user = $request->user();
+        $cloudinary = $this->getCloudinary();
+
+        if ($user->cloudinary_public_id) {
+            $cloudinary->uploadApi()->destroy($user->cloudinary_public_id);
+        }
+
+        $result = $cloudinary->uploadApi()->upload(
+            $request->file('avatar')->getRealPath(),
+            ['folder' => 'avatars']
+        );
+
+        $user->avatar = $result['secure_url'];
+        $user->cloudinary_public_id = $result['public_id'];
+        $user->save();
+
+        return response()->json([
+            'message' => 'Avatar atualizado.',
+            'user'    => $user,
+        ]);
+    }
+
     /**
      * Delete the user's account.
      */

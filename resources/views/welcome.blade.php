@@ -113,7 +113,7 @@
         <div class="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2.5">
             @foreach(collect($popular)->sortByDesc('vote_average')->take(10) as $movie)
                 @if(!empty($movie['poster_path']))
-                    <a href="{{ route('movies.showFromApi', $movie['id']) }}"
+                   <a href="{{ route('movies.showFromApi', ['type' => 'movie', 'id' => $movie['id']]) }}"
                        class="relative rounded-lg overflow-hidden group block aspect-[2/3]">
                         <img src="https://image.tmdb.org/t/p/w185{{ $movie['poster_path'] }}"
                              class="w-full h-full object-cover transition duration-300 group-hover:brightness-60 group-hover:scale-105">

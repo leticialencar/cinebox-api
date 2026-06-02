@@ -17,37 +17,9 @@ class MovieController extends Controller
             ->latest()
             ->get();
 
-        $apiKey = config('services.tmdb.key');
-
-        $popularResponse = Http::get('https://api.themoviedb.org/3/movie/popular', [
-            'api_key' => $apiKey,
-            'language' => 'pt-BR'
+        return response()->json([
+            'collection' => $movies,
         ]);
-
-        $popular = $popularResponse->successful()
-            ? ($popularResponse->json()['results'] ?? [])
-            : [];
-
-        $upcomingResponse = Http::get('https://api.themoviedb.org/3/movie/upcoming', [
-            'api_key' => $apiKey,
-            'language' => 'pt-BR',
-            'region'   => 'BR',
-        ]);
-
-        $upcoming = $upcomingResponse->successful()
-            ? ($upcomingResponse->json()['results'] ?? [])
-            : [];
-
-        $topRatedResponse = Http::get('https://api.themoviedb.org/3/movie/top_rated', [
-            'api_key' => $apiKey,
-            'language' => 'pt-BR'
-        ]);
-
-        $topRated = $topRatedResponse->successful()
-            ? ($topRatedResponse->json()['results'] ?? [])
-            : [];
-
-        return view('movies.index', compact('movies', 'popular', 'upcoming', 'topRated'));
     }
 
     public function storeFromApi(Request $request)
@@ -58,7 +30,8 @@ class MovieController extends Controller
             'release_year' => 'nullable|integer',
             'description'  => 'nullable|string',
             'poster'       => 'nullable|string',
-            'rating'       => 'nullable|numeric|min:0|max:10'
+            'rating'       => 'nullable|numeric|min:0|max:10',
+            'media_type'   => 'nullable|in:movie,tv',
         ]);
 
         $userId = Auth::id();
@@ -68,133 +41,154 @@ class MovieController extends Controller
             ->exists();
 
         if ($exists) {
-            return redirect()
-                ->route('movies.index')
-                ->with('success', 'Esse filme já está na sua coleção!');
+            return response()->json([
+                'message' => 'Esse título já está na sua coleção.',
+            ], 409);
         }
 
-        Movie::create([
+        $movie = Movie::create([
             ...$data,
             'user_id' => $userId,
         ]);
 
-        return redirect()
-            ->route('movies.index')
-            ->with('success', 'Filme adicionado com sucesso!');
+        return response()->json([
+            'message' => 'Título adicionado com sucesso.',
+            'movie'   => $movie,
+        ], 201);
     }
 
-    public function showFromApi($id)
+    public function showFromApi(string $type, int $id)
     {
+        abort_unless(in_array($type, ['movie', 'tv']), 404);
+
         $apiKey = config('services.tmdb.key');
 
-        $movie = Http::get("https://api.themoviedb.org/3/movie/{$id}", [
-            'api_key' => $apiKey,
-            'language' => 'pt-BR'
+        $item = Http::get("https://api.themoviedb.org/3/{$type}/{$id}", [
+            'api_key'  => $apiKey,
+            'language' => 'pt-BR',
         ])->json();
 
-        if (!$movie) {
-            abort(404, 'Filme não encontrado');
+        if (!$item) {
+            abort(404, 'Título não encontrado');
         }
 
-        $movie['videos'] = Http::get("https://api.themoviedb.org/3/movie/{$id}/videos", [
-            'api_key' => $apiKey,
-            'language' => 'pt-BR'
+        $title   = $item['title']        ?? $item['name']           ?? '—';
+        $release = $item['release_date'] ?? $item['first_air_date'] ?? null;
+
+        $videos = Http::get("https://api.themoviedb.org/3/{$type}/{$id}/videos", [
+            'api_key'  => $apiKey,
+            'language' => 'pt-BR',
         ])->json('results') ?? [];
 
-        if (empty($movie['videos'])) {
-            $movie['videos'] = Http::get("https://api.themoviedb.org/3/movie/{$id}/videos", [
-                'api_key' => $apiKey,
-                'language' => 'en-US'
+        if (empty($videos)) {
+            $videos = Http::get("https://api.themoviedb.org/3/{$type}/{$id}/videos", [
+                'api_key'  => $apiKey,
+                'language' => 'en-US',
             ])->json('results') ?? [];
         }
 
-        $movie['credits'] = Http::get("https://api.themoviedb.org/3/movie/{$id}/credits", [
-            'api_key' => $apiKey,
-            'language' => 'pt-BR'
+        $creditsEndpoint = $type === 'tv' ? 'aggregate_credits' : 'credits';
+
+        $credits = Http::get("https://api.themoviedb.org/3/{$type}/{$id}/{$creditsEndpoint}", [
+            'api_key'  => $apiKey,
+            'language' => 'pt-BR',
         ])->json() ?? ['cast' => [], 'crew' => []];
 
-        $movie['backdrop'] = !empty($movie['backdrop_path'])
-            ? "https://image.tmdb.org/t/p/original{$movie['backdrop_path']}"
+        $backdrop = !empty($item['backdrop_path'])
+            ? "https://image.tmdb.org/t/p/original{$item['backdrop_path']}"
             : null;
 
-        $movie['poster'] = !empty($movie['poster_path'])
-            ? "https://image.tmdb.org/t/p/w500{$movie['poster_path']}"
+        $poster = !empty($item['poster_path'])
+            ? "https://image.tmdb.org/t/p/w500{$item['poster_path']}"
             : null;
 
-        $movie['rating'] = isset($movie['vote_average'])
-            ? number_format($movie['vote_average'], 1)
+        $rating = isset($item['vote_average'])
+            ? number_format($item['vote_average'], 1)
             : '0.0';
 
-        $movie['release'] = $movie['release_date'] ?? null;
+        $genres = collect($item['genres'] ?? [])
+            ->pluck('name')
+            ->implode(', ');
 
-        $movie['director'] = collect($movie['credits']['crew'])
-            ->firstWhere('job', 'Director')['name'] ?? '—';
+        $crew = collect($credits['crew'] ?? []);
 
-        $movie['writer'] = collect($movie['credits']['crew'])
-            ->firstWhere('job', 'Writer')['name']
-            ?? collect($movie['credits']['crew'])->firstWhere('job', 'Screenplay')['name']
-            ?? '—';
+        if ($type === 'tv') {
+            $director = $crew->first(function ($c) {
+                return collect($c['jobs'] ?? [])->contains('job', 'Director');
+            })['name'] ?? null;
 
-        $movie['studios'] = collect($movie['production_companies'] ?? [])
+            if (!$director) {
+                $director = collect($item['created_by'] ?? [])->pluck('name')->first() ?? '—';
+            }
+
+            $writer = $crew->first(function ($c) {
+                $jobs = collect($c['jobs'] ?? [])->pluck('job');
+                return $jobs->contains('Writer') || $jobs->contains('Screenplay');
+            })['name'] ?? '—';
+
+        } else {
+            $director = $crew->firstWhere('job', 'Director')['name'] ?? '—';
+            $writer   = $crew->firstWhere('job', 'Writer')['name']
+                ?? $crew->firstWhere('job', 'Screenplay')['name']
+                ?? '—';
+        }
+
+        $studios = collect($item['production_companies'] ?? [])
             ->pluck('name')
             ->take(2)
             ->implode(', ');
 
-        $cast = $movie['credits']['cast'] ?? [];
+        $cast = collect($credits['cast'] ?? [])
+            ->take(10)
+            ->map(fn($c) => [
+                'id'        => $c['id'],
+                'name'      => $c['name'],
+                'character' => $type === 'tv'
+                    ? (collect($c['roles'] ?? [])->first()['character'] ?? null)
+                    : ($c['character'] ?? null),
+                'profile'   => $c['profile_path']
+                    ? 'https://image.tmdb.org/t/p/w185' . $c['profile_path']
+                    : null,
+            ]);
 
-        $title = $movie['title'] ?? '—';
-        $description = $movie['overview'] ?? '';
-        $poster = $movie['poster'];
-        $backdrop = $movie['backdrop'];
-        $rating = $movie['rating'];
-        $release = $movie['release'];
-        $director = $movie['director'];
-        $writer = $movie['writer'];
-        $studios = $movie['studios'];
-        $videos = collect($movie['videos']);
+        $firstWord        = strtolower(explode(' ', trim($title))[0]);
+        $videosCollection = collect($videos);
 
-        $movieTitle = strtolower($movie['title'] ?? '');
-        $firstWord = strtolower(explode(' ', trim($movieTitle))[0]);
-
-        $trailer = $videos->first(function ($v) use ($firstWord) {
+        $trailer = $videosCollection->first(function ($v) use ($firstWord) {
             $name = strtolower($v['name'] ?? '');
             return $v['type'] === 'Trailer'
                 && ($v['official'] ?? false) === true
                 && str_contains($name, $firstWord);
         })['key'] ?? null
-        ?: ($videos->skip(1)->firstWhere('type', 'Trailer')['key'] ?? null)
-        ?: ($videos->firstWhere('type', 'Trailer')['key'] ?? null);
+        ?: ($videosCollection->skip(1)->firstWhere('type', 'Trailer')['key'] ?? null)
+        ?: ($videosCollection->firstWhere('type', 'Trailer')['key'] ?? null);
 
-        $runtime = $movie['runtime'] ?? null;
-        $hours = $runtime ? floor($runtime / 60) : null;
+        $runtime = $item['runtime'] ?? ($item['episode_run_time'][0] ?? null);
+        $hours   = $runtime ? floor($runtime / 60) : null;
         $minutes = $runtime ? $runtime % 60 : null;
 
-        $userRating = null;
-
-        $userId = Auth::id();
-        $userData = Movie::where('user_id', $userId)
+        $userData = Movie::where('user_id', Auth::id())
             ->where('tmdb_id', $id)
             ->first();
 
-        return view('movies.show', compact(
-            'movie',
-            'cast',
-            'title',
-            'description',
-            'poster',
-            'backdrop',
-            'rating',
-            'release',
-            'director',
-            'writer',
-            'studios',
-            'trailer',
-            'hours',
-            'minutes',
-            'userRating',
-            'id',
-            'userData'
-        ));
+        return response()->json([
+            'type'        => $type,
+            'title'       => $title,
+            'description' => $item['overview'] ?? '',
+            'poster'      => $poster,
+            'backdrop'    => $backdrop,
+            'rating'      => $rating,
+            'release'     => $release,
+            'genres'      => $genres,   // ← novo
+            'director'    => $director,
+            'writer'      => $writer,
+            'studios'     => $studios,
+            'trailer'     => $trailer,
+            'hours'       => $hours,
+            'minutes'     => $minutes,
+            'cast'        => $cast,
+            'userData'    => $userData,
+        ]);
     }
 
     public function destroy(Movie $movie)
@@ -205,18 +199,9 @@ class MovieController extends Controller
 
         $movie->delete();
 
-        return redirect()
-            ->route('movies.index')
-            ->with('success', 'Filme removido com sucesso!');
-    }
-
-    public function edit(Movie $movie)
-    {
-        if ($movie->user_id !== Auth::id()) {
-            abort(403);
-        }
-
-        return view('movies.edit', compact('movie'));
+        return response()->json([
+            'message' => 'Título removido com sucesso.',
+        ]);
     }
 
     public function saveOrUpdate(Request $request)
@@ -225,6 +210,7 @@ class MovieController extends Controller
             'tmdb_id'     => 'required',
             'title'       => 'required|string|max:255',
             'poster'      => 'nullable|string',
+            'media_type'  => 'nullable|in:movie,tv',
             'user_rating' => 'nullable|integer|min:0|max:10',
             'review'      => 'nullable|string|max:2000',
         ]);
@@ -241,19 +227,23 @@ class MovieController extends Controller
                 'review'      => $data['review'],
             ]);
         } else {
-            Movie::create([
+            $movie = Movie::create([
                 'user_id'     => $userId,
                 'tmdb_id'     => $data['tmdb_id'],
                 'title'       => $data['title'],
                 'poster'      => $data['poster'],
+                'media_type'  => $data['media_type'] ?? 'movie',
                 'user_rating' => $data['user_rating'],
                 'review'      => $data['review'],
             ]);
         }
 
-        return back()->with('success', 'Avaliação salva com sucesso!');
+        return response()->json([
+            'message' => 'Avaliação salva com sucesso.',
+            'movie'   => $movie,
+        ]);
     }
-    
+
     public function toggleFavorite(Movie $movie)
     {
         if ($movie->user_id !== Auth::id()) {
@@ -263,7 +253,9 @@ class MovieController extends Controller
         $movie->is_favorite = !$movie->is_favorite;
         $movie->save();
 
-        return back();
+        return response()->json([
+            'is_favorite' => $movie->is_favorite,
+        ]);
     }
 
     public function search(Request $request)
@@ -274,22 +266,74 @@ class MovieController extends Controller
             return response()->json([]);
         }
 
-        $results = Http::get('https://api.themoviedb.org/3/search/movie', [
+        $results = Http::get('https://api.themoviedb.org/3/search/multi', [
             'api_key'  => config('services.tmdb.key'),
             'language' => 'pt-BR',
             'query'    => $query,
         ])->json()['results'] ?? [];
 
         return response()->json(
-            collect($results)->take(6)->map(fn($m) => [
-                'id'          => $m['id'],
-                'title'       => $m['title'],
-                'year'        => substr($m['release_date'] ?? '', 0, 4),
-                'poster'      => $m['poster_path']
-                    ? 'https://image.tmdb.org/t/p/w92' . $m['poster_path']
-                    : null,
-            ])
+            collect($results)
+                ->whereIn('media_type', ['movie', 'tv'])
+                ->take(6)
+                ->map(fn($m) => [
+                    'id'         => $m['id'],
+                    'title'      => $m['title'] ?? $m['name'] ?? '—',
+                    'year'       => substr($m['release_date'] ?? $m['first_air_date'] ?? '', 0, 4),
+                    'poster'     => $m['poster_path']
+                        ? 'https://image.tmdb.org/t/p/w92' . $m['poster_path']
+                        : null,
+                    'media_type' => $m['media_type'],
+                ])
+                ->values()
         );
     }
 
+    public function popular()
+    {
+        $apiKey = config('services.tmdb.key');
+
+        $movies = Http::get('https://api.themoviedb.org/3/movie/popular', [
+            'api_key'  => $apiKey,
+            'language' => 'pt-BR',
+        ])->json()['results'] ?? [];
+
+        $shows = Http::get('https://api.themoviedb.org/3/tv/popular', [
+            'api_key'  => $apiKey,
+            'language' => 'pt-BR',
+        ])->json()['results'] ?? [];
+
+        $popular = collect($movies)
+            ->map(fn($m) => [
+                'id'           => $m['id'],
+                'title'        => $m['title'],
+                'poster'       => $m['poster_path']
+                    ? 'https://image.tmdb.org/t/p/w185' . $m['poster_path']
+                    : null,
+                'backdrop'     => $m['backdrop_path']
+                    ? 'https://image.tmdb.org/t/p/original' . $m['backdrop_path']
+                    : null,
+                'vote_average' => number_format($m['vote_average'], 1),
+                'media_type'   => 'movie',
+            ])
+            ->merge(
+                collect($shows)->map(fn($s) => [
+                    'id'           => $s['id'],
+                    'title'        => $s['name'],
+                    'poster'       => $s['poster_path']
+                        ? 'https://image.tmdb.org/t/p/w185' . $s['poster_path']
+                        : null,
+                    'backdrop'     => $s['backdrop_path']
+                        ? 'https://image.tmdb.org/t/p/original' . $s['backdrop_path']
+                        : null,
+                    'vote_average' => number_format($s['vote_average'], 1),
+                    'media_type'   => 'tv',
+                ])
+            )
+            ->sortByDesc('vote_average')
+            ->take(20)
+            ->values();
+
+        return response()->json($popular);
+    }
 }

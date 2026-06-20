@@ -336,4 +336,49 @@ class MovieController extends Controller
 
         return response()->json($popular);
     }
+
+    public function similar(string $type, int $id)
+    {
+        abort_unless(in_array($type, ['movie', 'tv']), 404);
+
+        $apiKey = config('services.tmdb.key');
+
+        $results = Http::get(
+            "https://api.themoviedb.org/3/{$type}/{$id}/similar",
+            [
+                'api_key'  => $apiKey,
+                'language' => 'pt-BR',
+            ]
+        )->json()['results'] ?? [];
+
+
+        return response()->json(
+            collect($results)
+                ->take(10)
+                ->map(fn($movie) => [
+                    'id' => $movie['id'],
+
+                    'title' => $movie['title']
+                        ?? $movie['name']
+                        ?? '—',
+
+                    'poster' => !empty($movie['poster_path'])
+                        ? 'https://image.tmdb.org/t/p/w185' . $movie['poster_path']
+                        : null,
+
+                    'rating' => number_format(
+                        $movie['vote_average'] ?? 0,
+                        1
+                    ),
+
+                    'release' =>
+                        $movie['release_date']
+                        ?? $movie['first_air_date']
+                        ?? null,
+
+                    'media_type' => $type,
+                ])
+                ->values()
+        );
+    }
 }

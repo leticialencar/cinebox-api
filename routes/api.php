@@ -21,6 +21,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/movies/save-or-update', [MovieController::class, 'saveOrUpdate']);
     Route::delete('/movies/{movie}', [MovieController::class, 'destroy']);
     Route::patch('/movies/{movie}/favorite', [MovieController::class, 'toggleFavorite']);
+    Route::get('/movies/{type}/{id}/similar', [MovieController::class, 'similar']);
 
     Route::get('/media/search', [MovieController::class, 'search']);
     Route::get('/media/{type}/{id}', [MovieController::class, 'showFromApi'])
